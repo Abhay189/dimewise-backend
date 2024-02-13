@@ -7,48 +7,74 @@ from flask_cors import CORS
 from datetime import datetime
 import seaborn as sns
 import matplotlib.pyplot
-matplotlib.use('Agg')  # Use non-GUI backend
+matplotlib.use('Agg')  
 import matplotlib.pyplot as plt
 import pandas as pd
+import bcrypt
 
 app = Flask(__name__)
 CORS(app) 
 
-# Fetch the service account key JSON file contents
+
 cred = credentials.Certificate('./dimewise-6477c-firebase-adminsdk-7smhu-772c7e4761.json')
 
-# Initialize the app with a service account, granting admin privileges
 firebase_admin.initialize_app(cred, {
     'databaseURL': 'https://dimewise-6477c-default-rtdb.firebaseio.com/'
 })
 
 def safe_date_converter(date_str):
     timestamp = datetime.fromisoformat(date_str)
-    return timestamp.strftime('%Y%m%dT%H%M%S%f')
+    year = timestamp.strftime('%Y')
+    month = timestamp.strftime('%m')
+    day = timestamp.strftime('%d') 
+    time = timestamp.strftime('%H:%M:%S')
 
-def add_account_type(username,account_type,curr_acc_balance):
-    accounts_path = '/users/'+username+'/accounts'
-    
-    user_ref = db.reference(accounts_path)
+    return (year,month,day,time)
 
-    data = {
-        account_type : curr_acc_balance
-    }
+def initialize_account_type(username,account_type,balance):
+    try: 
+        if not user_is_valid(username):
+            return {'success': False ,"message": "Invalid Username"}
+        
+        if not new_resource_valid(username,account_type):
+            return {'success': False ,"message": "Account Type already Exists"}
 
-    user_ref.update(data)
+        accounts_data = {
+            'accounts' : {
+                account_type : balance
+            }
+        }
+        user_ref = db.reference(f"/users/{username}")
+        user_ref.update(accounts_data)
 
-def add_account_balance(username,account_type, add_amount):
-    accounts_path = '/users/'+username+'/accounts'
-    
-    user_ref = db.reference(accounts_path)
+        return {'success': True ,"message": "Account data set successfully"}
+    except Exception as e:
+        print("An error occurred:", e)
+        return {"success": False ,"message": "Error occured while adding Account Resource"}
 
-    curr_balance = user_ref.child(account_type).get()
+def update_account_balance(username,account_type, add_amount):
+    try: 
+        if not user_is_valid(username):
+            return {'success': False ,"message": "Invalid Username"}
+        
+        if new_resource_valid(username,account_type):
+            return {'success': False ,"message": "Account Type does not exists"}
 
-    data = {
-        account_type : add_amount + curr_balance
-    }
+        account_ref = db.reference(f"/users/{username}/accounts/{account_type}")
+        curr_account_balance = account_ref.get()
 
-    user_ref.update(data)
+        accounts_data = {
+            'accounts' : {
+                account_type : curr_account_balance + add_amount
+            }
+        }
+        user_ref = db.reference(f"/users/{username}")
+        user_ref.update(accounts_data)
+
+        return {'success': True ,"message": "Account data set successfully"}
+    except Exception as e:
+        print("An error occurred:", e)
+        return {"success": False ,"message": "Error occured while updating Account Resource"}
 
 def get_monthly_spending_data(username,year,start_month,end_month):
     if end_month < start_month :
@@ -132,155 +158,181 @@ def generate_yearly_spending_graph(username, start_year, end_year):
     
     return plot_path
 
+def encode_email(email):
+    return email.replace('.', ',')
+
+def decode_email(encoded_email):
+    return encoded_email.replace(',', '.')
+
+def valid_signup(username,encoded_email):
+    # Db paths for username and email 
+    username_path = f"/users/{username}"
+    email_path = f"/emails/{encoded_email}"
+
+    try:
+        # creating db path references 
+        username_ref = db.reference(username_path)
+        email_ref = db.reference(email_path)
+        
+        # Checking if these paths exist in the db 
+        username_snap = username_ref.get()
+        email_snap = email_ref.get()
+        if username_snap:
+            return ({"success": False ,"message": "Username already exists"})
+        elif email_snap : 
+            return ({"success": False ,"message": "Email already exists"})
+        
+    except:
+        return ({"success": False ,"message": "A database error occurred, please try again later."})
+    
+    return ({"success": True , "message": "Valid sign-in data"})
+
+def user_is_valid(username):
+    user_ref = db.reference(f"/users/{username}")
+    user_snap = user_ref.get()
+
+    if not user_snap:
+        return False
+    else:
+        return True
+
+def new_resource_valid(username,account_type):
+    try:
+        account_path = f"/users/{username}/accounts/{account_type}"
+        account_ref = db.reference(account_path)
+        account_snap = account_ref.get()
+        if account_snap:
+            return False 
+        else:
+            return True 
+    except Exception as e:
+        print("An error occurred:", e)
+        return False 
+
+def update_yearly_monthly_spending(username,year,month,amount):
+    yearly_ref = db.reference(f"/users/{username}/transactions/{year}")
+    curr_yearly_val = yearly_ref.child('yearly_spending').get()
+
+    monthly_ref = db.reference(f"/users/{username}/transactions/{year}/{month}")
+    curr_montly_val = monthly_ref.child('monthly_spending').get()
+
+    if not curr_yearly_val:
+        curr_yearly_val = amount
+    else:
+        curr_yearly_val += amount
+
+    if curr_montly_val is None:
+        curr_montly_val = amount
+    else:
+        curr_montly_val += amount
+
+    yearly_ref.update({'yearly_spending': curr_yearly_val})
+    monthly_ref.update({'monthly_spending': curr_montly_val})
+
+def update_account_post_transaction(username,account_type,amount):
+    account_type_path = '/users/'+username + '/accounts/' + account_type
+    account_type_ref = db.reference(account_type_path)
+    account_type_check = account_type_ref.get()
+
+    if account_type_check:
+        update_account_balance(username,account_type,amount)
+    else:
+        initialize_account_type(username,account_type,amount)
+
 
 @app.route('/signup', methods=['POST'])
 def signup():
     if request.method == 'POST':
-        print(request.json)
-        userdata = request.json
-        email = userdata.get('email')
-        first_name = userdata.get('first_name')
-        last_name = userdata.get('last_name')
-        password = userdata.get('password')
-        username = userdata.get('username')
+        try:
+            userdata = request.json
+            email = userdata.get('email')
+            username = userdata.get('username')
+            userdata.pop('username')
+            userdata['password'] = bcrypt.hashpw(userdata.get('password').encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 
-        all_users_ref = db.reference('/users')
-        all_users_data = all_users_ref.get()
+            encoded_email = encode_email(email)
+            userdata['email'] = encoded_email
 
-        for user_dat in all_users_data.values():
-            if user_dat.get('email') == email:
-                return jsonify({"message": "Email already exists"}), 400
+            signup_validation = valid_signup(username,encoded_email)
+            if not signup_validation['success']:
+                return jsonify(signup_validation), 400 
 
+            user_ref = db.reference('/users')
+            user_ref.child(username).set(userdata)
 
-        user_check_ref = db.reference('/users/'+username)
-        user_check = user_check_ref.get()
+            email_ref = db.reference(f"/emails")
+            email_ref.update({encoded_email:username})
 
-        if user_check:
-            return jsonify({"message": "Username already exists"}), 400
-        
-
-        userref = db.reference('/users')
-
-        data = {
-                'email': email,
-                'first_name': first_name,
-                'last_name': last_name,
-                'password': password
-        }
-        userref.child(username).set(data)
-
-        return jsonify({"message": "User created successfully"}), 201
+            return jsonify({"success": True ,"message": "User created successfully"}), 201
+        except Exception as e:
+            print("An error occurred:", e)
+            return jsonify({"success": False ,"message": "Error occured while signing up"}), 400
     
     else:
-        return jsonify({"message": "Invalid request method"}), 400
+        return jsonify({"success": False ,"message": "Invalid request method"}), 400
     
 @app.route('/login', methods=['POST'])
 def login():
-
-    print(request.json)
-    username = request.json.get('username')
-    password = request.json.get('password')
-
-    user_path = '/users/'+username
-    
-    user_ref = db.reference(user_path)
-    user_data = user_ref.get()
-    if user_data and user_data['password'] == password:
-        return jsonify({'success': True ,"message": "Successfully logged in"}), 201
-    else: 
-        return jsonify({'success': False ,"message": "Invalid username or password"}), 404
-        
-
-@app.route('/accounts/add', methods=['POST'])
-def addAccount():
     if request.method == 'POST':
-        print(request.json)
+        try: 
+            username = request.json.get('username')
+            password = request.json.get('password')
+            
+            user_path =  f"/users/{username}"
+            user_ref = db.reference(user_path)
+            user_data = user_ref.get()
+
+            if user_data and bcrypt.checkpw(password.encode('utf-8'), user_data.get('password').encode('utf-8')):
+                return jsonify({'success': True ,"message": "Successfully logged in"}), 201
+            else: 
+                return jsonify({'success': False ,"message": "Invalid username or password"}), 404
+        except Exception as e:
+            print("An error occurred:", e)
+            return jsonify({"success": False ,"message": "Error occured while loging in"}), 400
+        
+    else:
+        return jsonify({"success": False ,"message": "Invalid request method"}), 400
+    
+@app.route('/accounts/add', methods=['POST'])
+def addAccountResource():
+    if request.method == 'POST':
         username = request.json.get('username')
         account_type = request.json.get('account_type')
-        balance = request.json.get('balance')
+        balance = request.json.get('balance',0)
 
-        check_user = '/users/'+username
-        check_ref = db.reference(check_user)
-        check_snapshot = check_ref.get()
+        return_val = initialize_account_type(username,account_type,balance)
 
-        print(check_snapshot)
-
-        if not check_snapshot:
-            return jsonify({"message": "Invalid Username"}), 400
-
-        user_path = '/users/'+username
-        
-        user_ref = db.reference(user_path)
-
-        data = {
-            'accounts' : {
-                account_type : balance
-            }
-        }
-
-        user_ref.update(data)
-
-        return jsonify({"message": "Accounts data set successfully"}), 201
+        if return_val['success']:
+            return jsonify(return_val), 201
+        else:
+            return jsonify(return_val) , 400
     
     else:
-        return jsonify({"message": "Invalid request method"}), 400
-
+        return jsonify({'success': False ,"message": "Invalid request method"}), 400
 
 @app.route('/transaction/add', methods=['POST'])
 def addTransaction():
     if request.method == 'POST':
-        print(request.json)
         username = request.json.get('username')
         account_type = request.json.get('account_type')
         amount = request.json.get('amount')
         timestamp = request.json.get('timestamp')
         description = request.json.get('description')
 
-        safe_datetime_str = safe_date_converter(timestamp)
+        year,month,day,time= safe_date_converter(timestamp)
 
-        account_type_path = '/users/'+username + '/accounts/' + account_type
-        account_type_ref = db.reference(account_type_path)
-        account_type_check = account_type_ref.get()
+        update_account_post_transaction(username,account_type,amount)
+        update_yearly_monthly_spending(username,year,month,amount)
 
-        if account_type_check:
-            add_account_balance(username,account_type,amount)
-        else:
-            add_account_type(username,account_type,amount)
-
-        data = {
+        transaction_data = {
             'account_type' : account_type,
             'amount' : amount,
             'description' : description
         }
 
-        #update yearly_spending , monthly_spending and daily spending. 
-        yearly_ref = db.reference(f"/users/{username}/transactions/{safe_datetime_str[:4]}")
-        curr_yearly_val = yearly_ref.child('yearly_spending').get()
-
-        # Yearly 
-        if curr_yearly_val is None:
-            curr_yearly_val = amount
-        else:
-            curr_yearly_val += amount
-
-        yearly_ref.update({'yearly_spending': curr_yearly_val})
-
-        # Monthly : 
-        monthly_ref = db.reference(f"/users/{username}/transactions/{safe_datetime_str[:4]}/{safe_datetime_str[4:6]}")
-        curr_montly_val = monthly_ref.child('monthly_spending').get()
-
-        # Yearly 
-        if curr_montly_val is None:
-            curr_montly_val = amount
-        else:
-            curr_montly_val += amount
-
-        monthly_ref.update({'monthly_spending': curr_montly_val})
-
-        transaction_path = f"/users/{username}/transactions/{safe_datetime_str[:4]}/{safe_datetime_str[4:6]}/{safe_datetime_str[6:8]}"
+        transaction_path = f"/users/{username}/transactions/{year}/{month}/{day}"
         transaction_ref = db.reference(transaction_path)
-
-        transaction_ref.child(safe_datetime_str[8:]).update(data)
+        transaction_ref.child(time).update(transaction_data)
 
         return jsonify({"message": "Transaction successfully added"}), 201
     
@@ -290,22 +342,19 @@ def addTransaction():
 @app.route('/transaction/delete', methods=['DELETE'])
 def deleteTransaction():
     if request.method == 'DELETE':
-        print(request.json)
         username = request.json.get('username')
         timestamp = request.json.get('timestamp')
 
-        safe_datetime_str = safe_date_converter(timestamp)
+        year,month,day,time = safe_date_converter(timestamp)
 
-        transactions_path = '/users/'+username+ '/transactions'
-        transactions_ref = db.reference(transactions_path)
-        transactions_snap = transactions_ref.child(safe_datetime_str).get()
+        transaction_path = f"/users/{username}/transactions/{year}/{month}/{day}"
+        transaction_ref = db.reference(transaction_path)
+        transactions_snap = transaction_ref.child(time).get()
 
         if transactions_snap:  
-            print("data to be deleted : ",transactions_ref.child(safe_datetime_str).get())
-            transactions_ref.child(safe_datetime_str).delete()
+            transaction_ref.child(time).delete()
             return jsonify({"message": "Transaction successfully deleted"}), 200
         else:
-
             return jsonify({"message": "Transaction does not exist"}), 404
         
     else:
@@ -321,7 +370,6 @@ def getTransactionYearlyGraph():
 
         plot_path = generate_yearly_spending_graph(username,start_year,end_year)
         
-        # Return the file path in the response
         return send_file(plot_path, mimetype='image/png'), 201
     else:
         return jsonify({"message": "Invalid request method"}), 400
@@ -336,7 +384,6 @@ def getTransactionMonthlyGraph():
 
         plot_path = generate_monthly_spending_graph(username,year, start_month,end_month)
         
-        # Return the file path in the response
         return send_file(plot_path, mimetype='image/png'), 201
     else:
         return jsonify({"message": "Invalid request method"}), 400
