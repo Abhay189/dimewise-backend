@@ -354,98 +354,133 @@ def login():
     
 @app.route('/accounts/add', methods=['POST'])
 def addAccountResource():
+    # Handle POST requests for adding account resources
     if request.method == 'POST':
+        # Extract account details from the request
         username = request.json.get('username')
         account_type = request.json.get('account_type')
-        balance = request.json.get('balance',0)
+        balance = request.json.get('balance', 0)  # Default balance to 0 if not provided
 
-        return_val = initialize_account_type(username,account_type,balance)
+        # Attempt to initialize the account with the provided details
+        return_val = initialize_account_type(username, account_type, balance)
 
+        # Return response based on the success of the account initialization
         if return_val['success']:
+            # Account successfully added
             return jsonify(return_val), 201
         else:
-            return jsonify(return_val) , 400
-    
+            # Account addition failed
+            return jsonify(return_val), 400
     else:
-        return jsonify({'success': False ,"message": "Invalid request method"}), 400
+        # Handle incorrect request methods with an error message
+        return jsonify({'success': False, "message": "Invalid request method"}), 400
+
 
 @app.route('/transaction/add', methods=['POST'])
 def addTransaction():
+    # Handle POST requests for adding transactions
     if request.method == 'POST':
+        # Extract transaction details from the request
         username = request.json.get('username')
         account_type = request.json.get('account_type')
         amount = request.json.get('amount')
         timestamp = request.json.get('timestamp')
         description = request.json.get('description')
 
-        year,month,day,time= datetime_data_extractor(timestamp)
+        # Extract the date and time components from the timestamp
+        year, month, day, time = datetime_data_extractor(timestamp)
 
-        update_account_post_transaction(username,account_type,amount)
-        update_yearly_monthly_spending(username,year,month,amount)
+        # Update the account balance and spending records
+        update_account_post_transaction(username, account_type, amount)
+        update_yearly_monthly_spending(username, year, month, amount)
 
+        # Prepare transaction data for storage
         transaction_data = {
-            'account_type' : account_type,
-            'amount' : amount,
-            'description' : description
+            'account_type': account_type,
+            'amount': amount,
+            'description': description
         }
 
+        # Construct the database path for storing the transaction
         transaction_path = f"/users/{username}/transactions/{year}/{month}/{day}"
         transaction_ref = db.reference(transaction_path)
+        # Store the transaction data at the specified path and time
         transaction_ref.child(time).update(transaction_data)
 
+        # Return a success message for the added transaction
         return jsonify({"message": "Transaction successfully added"}), 201
-    
     else:
+        # Handle incorrect request methods with an error message
         return jsonify({"message": "Invalid request method"}), 400
 
 @app.route('/transaction/delete', methods=['DELETE'])
 def deleteTransaction():
+    # Handle DELETE requests to remove a specific transaction
     if request.method == 'DELETE':
+        # Extract required identifiers from the request
         username = request.json.get('username')
         timestamp = request.json.get('timestamp')
 
-        year,month,day,time = datetime_data_extractor(timestamp)
+        # Break down the timestamp into its components
+        year, month, day, time = datetime_data_extractor(timestamp)
 
+        # Construct the path to the specific transaction in the database
         transaction_path = f"/users/{username}/transactions/{year}/{month}/{day}"
         transaction_ref = db.reference(transaction_path)
+        # Check if the transaction exists
         transactions_snap = transaction_ref.child(time).get()
 
-        if transactions_snap:  
+        if transactions_snap:
+            # Delete the transaction if it exists
             transaction_ref.child(time).delete()
             return jsonify({"message": "Transaction successfully deleted"}), 200
         else:
+            # Inform the client if the transaction does not exist
             return jsonify({"message": "Transaction does not exist"}), 404
         
     else:
+        # Respond to incorrect request methods
         return jsonify({"message": "Invalid request method"}), 400
 
 
 @app.route('/transaction/get/graph/yearly', methods=['GET'])
 def getTransactionYearlyGraph():
+    # Handle GET requests to retrieve a graph of yearly transactions
     if request.method == 'GET':
+        # Extract user and year range from the request
         username = request.json.get('username')
         start_year = request.json.get('start_year')
         end_year = request.json.get('end_year')
 
-        plot_path = generate_yearly_spending_graph(username,start_year,end_year)
+        # Generate the path to the yearly spending graph
+        plot_path = generate_yearly_spending_graph(username, start_year, end_year)
         
+        # Serve the generated graph as an image
         return send_file(plot_path, mimetype='image/png'), 201
     else:
+        # Handle requests with invalid methods
         return jsonify({"message": "Invalid request method"}), 400
+
     
 @app.route('/transaction/get/graph/monthly', methods=['GET'])
 def getTransactionMonthlyGraph():
+    # Handle GET requests to retrieve a graph of monthly transactions
     if request.method == 'GET':
+        # Extract user details and the specific month range from the request
         username = request.json.get('username')
         year = request.json.get('year')
         start_month = request.json.get('start_month')
         end_month = request.json.get('end_month')
 
-        plot_path = generate_monthly_spending_graph(username,year, start_month,end_month)
+        # Generate the path to the monthly spending graph
+        plot_path = generate_monthly_spending_graph(username, year, start_month, end_month)
         
+        # Serve the generated graph as an image
         return send_file(plot_path, mimetype='image/png'), 201
     else:
+        # Respond to non-GET requests with an error message
         return jsonify({"message": "Invalid request method"}), 400
+
 
 
 if __name__ == '__main__':
