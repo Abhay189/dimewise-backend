@@ -24,6 +24,20 @@ firebase_admin.initialize_app(cred, {
     'databaseURL': 'https://dimewise-6477c-default-rtdb.firebaseio.com/'
 })
 
+"""
+
+This is the backend code for Dimewise (a financial management web application), designed to handle user interactions related to financial transactions and account management.
+
+The functionalities this backend supports are:
+
+1. Authentication for login/signup, including password hashing and email encoding for database storage.
+2. Account management, allowing users to add and initialize new financial accounts with specified balances.
+3. Transaction handling, enabling users to add and delete transactions, along with updating account balances accordingly.
+4. Data visualization, generating and serving monthly and yearly spending graphs to provide users with insights into their spending patterns.
+5. Interaction with Firebase Database (NoSQL) for storing and retrieving all user data, accounts, and transaction records securely and efficiently.
+
+"""
+
 #  ---- Helper Methods ----
 
 def datetime_data_extractor(date_str):
@@ -306,7 +320,7 @@ def signup():
             # Validate signup details
             signup_validation = valid_signup(username, encoded_email)
             if not signup_validation['success']:
-                return jsonify(signup_validation), 400 
+                return jsonify(signup_validation), 401
 
             # Database updates for user and email
             user_ref = db.reference('/users')
@@ -318,7 +332,7 @@ def signup():
         except Exception as e:
             # Handle unexpected errors during signup
             print("An error occurred:", e)
-            return jsonify({"success": False, "message": "Error occurred while signing up"}), 400
+            return jsonify({"success": False, "message": "Error occurred while signing up"}), 500
     else:
         # Respond to incorrect request methods
         return jsonify({"success": False, "message": "Invalid request method"}), 400
@@ -338,14 +352,14 @@ def login():
 
             # Validate credentials and return success message if valid
             if user_data and bcrypt.checkpw(password.encode('utf-8'), user_data.get('password').encode('utf-8')):
-                return jsonify({'success': True, "message": "Successfully logged in"}), 201
+                return jsonify({'success': True, "message": "Successfully logged in"}), 200
             else:
                 # Handle invalid login credentials
-                return jsonify({'success': False, "message": "Invalid username or password"}), 404
+                return jsonify({'success': False, "message": "Invalid username or password"}), 401
         except Exception as e:
             # Handle unexpected errors during login process
             print("An error occurred:", e)
-            return jsonify({"success": False, "message": "Error occurred while logging in"}), 400
+            return jsonify({"success": False, "message": "Error occurred while logging in"}), 500
         
     else:
         # Respond to non-POST requests to this endpoint
@@ -456,7 +470,7 @@ def getTransactionYearlyGraph():
         plot_path = generate_yearly_spending_graph(username, start_year, end_year)
         
         # Serve the generated graph as an image
-        return send_file(plot_path, mimetype='image/png'), 201
+        return send_file(plot_path, mimetype='image/png'), 200
     else:
         # Handle requests with invalid methods
         return jsonify({"message": "Invalid request method"}), 400
@@ -476,7 +490,7 @@ def getTransactionMonthlyGraph():
         plot_path = generate_monthly_spending_graph(username, year, start_month, end_month)
         
         # Serve the generated graph as an image
-        return send_file(plot_path, mimetype='image/png'), 201
+        return send_file(plot_path, mimetype='image/png'), 200
     else:
         # Respond to non-GET requests with an error message
         return jsonify({"message": "Invalid request method"}), 400
